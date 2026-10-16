@@ -1,0 +1,20 @@
+# Locked contract: YOLOv11n @640, COCO-pretrained init
+ultralytics==8.3.169
+torch>=2.4.0
+torchvision
+opencv-python>=4.8
+pyyaml
+tqdm
+matplotlib
+kaggle
+# Production serving
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+pydantic>=2.0
+prometheus-client>=0.20
+# Notebook
+ipykernel
+jupyter
+seaborn
+pandas
