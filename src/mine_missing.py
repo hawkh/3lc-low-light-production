@@ -8,7 +8,10 @@ Pipeline:
   1. train baseline (prod_v1, >=5 epochs so preds are sane)
   2. python -m src.mine_missing --weights runs/detect/prod_v1/weights/best.pt --conf 0.8 --out review_queue.json
   3. inspect review/ (CLAHE-brightened crops) — human accepts/rejects
-  4. python -m src.apply_fixes --queue reviewed.json --apply
+  4. set "status" to "accepted"/"rejected" per entry in review_queue.json
+  5. python -m src.apply_fixes --queue review_queue.json --apply
+  Next round (conf 0.7, 0.6): mine with --root dataset_fixed, apply with
+  --src dataset_fixed --out dataset_fixed_r2.
 
 Bulk-accept without review is prohibited by competition Rules; this script
 ENFORCES review by writing a queue, never patching labels directly.
@@ -54,6 +57,7 @@ def main():
     ap.add_argument("--weights", required=True)
     ap.add_argument("--conf", type=float, default=0.8)
     ap.add_argument("--iou", type=float, default=0.1)
+    ap.add_argument("--root", type=Path, default=KIT, help="dataset root (kit or a fixed copy)")
     ap.add_argument("--split", default="train")
     ap.add_argument("--out", default="review_queue.json")
     ap.add_argument("--max-images", type=int, default=0, help="0 = all")
@@ -61,14 +65,14 @@ def main():
     args = ap.parse_args()
 
     model = YOLO(args.weights)
-    imgs = sorted((KIT / f"images/{args.split}").glob("*.jpg"))
+    imgs = sorted((args.root / f"images/{args.split}").glob("*.jpg"))
     if args.max_images:
         imgs = imgs[: args.max_images]
     viz = Path(args.viz); viz.mkdir(exist_ok=True)
 
     queue, per_img = [], defaultdict(int)
     for i, ip in enumerate(imgs):
-        gt = load_gt(KIT / f"labels/{args.split}/{ip.stem}.txt")
+        gt = load_gt(args.root / f"labels/{args.split}/{ip.stem}.txt")
         res = model.predict(str(ip), conf=args.conf, iou=0.5, verbose=False)[0]
         if res.boxes is None:
             continue
@@ -98,9 +102,10 @@ def main():
             w.writerow([q["image"], q["cls"], q["conf"], *q["box"], q["max_iou"], q["gt_count"]])
     # CLAHE crops for top-100 so reviewers can SEE in the dark
     for q in queue[:100]:
-        clahe_save(KIT / f"images/{args.split}/{q['image']}", viz / f"{Path(q['image']).stem}_enh.jpg")
+        clahe_save(args.root / f"images/{args.split}/{q['image']}", viz / f"{Path(q['image']).stem}_enh.jpg")
     print(f"queued {len(queue)} across {len(per_img)} images -> {args.out} + review/ (top-100 enhanced)")
-    print("NEXT: open review/, set status accepted/rejected, then run apply_fixes.")
+    print(f"NEXT: open {viz}/, set status accepted/rejected in {args.out}, then run "
+          f"python -m src.apply_fixes --queue {args.out} --src {args.root} --apply")
 
 if __name__ == "__main__":
     main()

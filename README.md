@@ -28,16 +28,20 @@ Reference points: val mAP50 ≈ 0.53 @ 2 epochs, ≈ 0.70 @ 10 epochs. Competiti
 ## Repo layout
 
 ```
-notebooks/3lc_low_light_production.ipynb  # ← run this on Kaggle/Colab
+notebooks/3lc_low_light_production.ipynb  # <- run this on Kaggle/Colab
 src/
-  config.py            # contract, classes, per-class conf, low-light aug
+  config.py            # contract, classes, per-class conf, low-light aug, KIT path, dataset.yaml writer
   data_audit.py        # class/darkness/box-size audit
   train_production.py  # locked YOLOv11n + low-light recipe + rare-class cls=0.7
   mine_missing.py      # review QUEUE (never auto-patches; bulk-accept banned by Rules)
-  serve.py             # (next) FastAPI: /predict /feedback /metrics + Docker
-dataset.yaml           # absolute-path YOLO config (fixes ultralytics 8.3 rel-path bug)
+  apply_fixes.py       # applies only status=="accepted" entries -> dataset_fixed/
+  predict.py           # test-set inference with per-class conf -> validated submission.csv
 requirements.txt
 ```
+
+`dataset.yaml` is not committed. `train_production` writes one with absolute paths for your
+kit (ultralytics 8.3 mis-resolves relative `path: .`). The kit defaults to the 3LC plugin folder
+`~/.3lc-kaggle-plugin/data/exdark-low-light/v3/starter_kit`; set `LOWLIGHT_KIT` to use another one.
 
 ## Local quickstart (RTX 3050 4GB)
 
@@ -46,14 +50,21 @@ pip install -r requirements.txt
 python -m src.data_audit
 python -m src.train_production --epochs 20 --batch 4 --name prod_v1
 python -m src.mine_missing --weights runs/detect/prod_v1/weights/best.pt --conf 0.8
-# inspect review/ + review_queue.csv, then apply + retrain (see notebook cells 10-11)
+# look at review/, set "status" to "accepted" or "rejected" per entry in review_queue.json
+python -m src.apply_fixes --queue review_queue.json            # dry run
+python -m src.apply_fixes --queue review_queue.json --apply    # writes dataset_fixed/
+python -m src.train_production --data dataset_fixed/dataset.yaml --batch 4 --name prod_v2_fixed
+python -m src.predict --weights runs/detect/prod_v2_fixed/weights/best.pt
 ```
+
+Next mining round (conf 0.7, then 0.6): mine with `--root dataset_fixed`, then apply with
+`--src dataset_fixed --out dataset_fixed_r2`.
 
 ## Rules compliance
 
 - YOLOv11n only, `yolo11n.pt` COCO init, 640px — enforced in `config.py` / training cells.
 - No external data. TTA uses the **same** weights (test-time only).
-- Label fixes require **human visual review** (CLAHE crops in `review/`); `mine_missing.py` writes a queue and never patches labels directly. Bulk-accept without review is prohibited — don't do it.
+- Label fixes require **human visual review** (CLAHE crops in `review/`); `mine_missing.py` writes a queue and never patches labels directly, and `apply_fixes.py` (and notebook cell 10) apply only entries marked `accepted`. Bulk-accept without review is prohibited.
 
 ## Submission
 

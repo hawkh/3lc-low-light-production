@@ -13,17 +13,21 @@ Usage:
 import argparse
 from pathlib import Path
 from ultralytics import YOLO
-from .config import MODEL_ID, IMGSZ, LOWLIGHT_AUG, CLS_GAIN_RARE
+from .config import MODEL_ID, IMGSZ, LOWLIGHT_AUG, CLS_GAIN_RARE, KIT, write_dataset_yaml
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default="dataset.yaml")
+    ap.add_argument("--data", default=None,
+                    help="dataset yaml; default writes dataset.yaml for KIT with absolute paths")
     ap.add_argument("--epochs", type=int, default=20)
     ap.add_argument("--batch", type=int, default=4)
     ap.add_argument("--imgsz", type=int, default=IMGSZ)
     ap.add_argument("--name", default="prod_v1")
     ap.add_argument("--device", default=0)
     args = ap.parse_args()
+
+    if args.data is None:
+        args.data = str(write_dataset_yaml(KIT, Path("dataset.yaml")))
 
     model = YOLO(MODEL_ID)
     print(f"[train] init={MODEL_ID} imgsz={args.imgsz} epochs={args.epochs} batch={args.batch}")

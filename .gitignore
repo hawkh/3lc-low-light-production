@@ -18,3 +18,5 @@ feedback_store/
 review/
 __pycache__/
 .ipynb_checkpoints/
+dataset.yaml
+dataset_fixed*/

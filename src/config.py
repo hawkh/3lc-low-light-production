@@ -1,10 +1,18 @@
 """Single source of truth for paths, classes, competition contract."""
+import os
 from pathlib import Path
+
+import yaml
 
 COMPETITION_SLUG = "the-3lc-low-light-detection-challenge"
 MODEL_ID = "yolo11n.pt"          # pinned COCO checkpoint, same for everyone
 IMGSZ = 640                      # locked contract
-KIT = Path.home() / ".3lc-kaggle-plugin/data/exdark-low-light/v3/starter_kit"
+# 3LC plugin download location; set LOWLIGHT_KIT to use a kit elsewhere
+# (e.g. /kaggle/working/starter_kit).
+KIT = Path(os.environ.get(
+    "LOWLIGHT_KIT",
+    Path.home() / ".3lc-kaggle-plugin/data/exdark-low-light/v3/starter_kit",
+)).expanduser().resolve()
 
 CLASS_NAMES = {
     0: "Bicycle", 1: "Boat", 2: "Bottle", 3: "Bus", 4: "Car", 5: "Cat",
@@ -39,3 +47,23 @@ LOWLIGHT_AUG = dict(
 # Rare-class loss gains: Bus(565) Cat(727) Dog(814) need upweight vs People(5966)
 CLS_GAIN_RARE = 0.7   # vs default cls=0.5
 BOX_GAIN = 7.5        # keep
+
+
+def write_dataset_yaml(root: Path, out: Path) -> Path:
+    """Write a YOLO dataset.yaml with absolute paths for the kit at `root`.
+
+    ultralytics 8.3 mis-resolves relative `path: .`, so paths are absolute and
+    the file is generated per machine instead of committed.
+    """
+    root = Path(root).resolve()
+    cfg = {
+        "path": str(root),
+        "train": str(root / "images/train"),
+        "val": str(root / "images/val"),
+        "test": str(root / "images/test"),
+        "nc": len(CLASS_NAMES),
+        "names": CLASS_NAMES,
+    }
+    out = Path(out)
+    out.write_text(yaml.safe_dump(cfg, sort_keys=False))
+    return out
