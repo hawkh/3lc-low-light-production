@@ -4,9 +4,11 @@ Usage: python sweep_worker.py <config.json>
 Config keys: name, out_dir, data_yaml, model, val_images, val_labels,
 leak_stems, confs, deadline_ts (optional unix time), plugin (text),
 train_args (ultralytics kwargs; only what the plugin accepts).
-Writes <out_dir>/<name>/result.json. Skips if result.json exists.
+Writes <out_dir>/<name>/train_result.json as soon as training ends, then
+result.json after scoring. A re-run skips a finished config, and re-scores
+without retraining when only scoring failed (see score_error.txt).
 """
-import json, sys, time
+import json, sys, time, traceback
 from pathlib import Path
 
 LOCKED = {"imgsz": 640, "pretrained": True}
@@ -35,7 +37,8 @@ def load_val(val_images, val_labels):
     from PIL import Image
     out = []
     for p in sorted(Path(val_images).glob("*.jpg")):
-        w, h = Image.open(p).size
+        with Image.open(p) as im:
+            w, h = im.size
         gts = []
         lp = Path(val_labels) / f"{p.stem}.txt"
         if lp.exists():
@@ -108,12 +111,32 @@ def main():
     if res_path.exists():
         print(f"[{cfg['name']}] already done, skipping")
         return
-    args = dict(cfg["train_args"])
-    check_plugin_legal(args)
-
     from ultralytics import YOLO
+
+    train_path = out / "train_result.json"
+    if train_path.exists() and (out / "weights" / "best.pt").exists():
+        print(f"[{cfg['name']}] training already done, scoring only")
+        result = json.loads(train_path.read_text())
+    else:
+        result = train(cfg, out, YOLO)
+        train_path.write_text(json.dumps(result, indent=1))
+
+    try:
+        result["kaggle"] = score(cfg, out, YOLO)
+    except Exception:
+        (out / "score_error.txt").write_text(traceback.format_exc())
+        print(f"[{cfg['name']}] scoring failed; training kept, re-run to re-score. See score_error.txt")
+        raise
+    (out / "score_error.txt").unlink(missing_ok=True)
+    res_path.write_text(json.dumps(result, indent=1))
+    print(f"[{cfg['name']}] done, trained in {result['train_minutes']} min")
+
+
+def train(cfg, out, YOLO):
     import pandas as pd
 
+    args = dict(cfg["train_args"])
+    check_plugin_legal(args)
     deadline = cfg.get("deadline_ts")
     hit_deadline = {"v": False}
 
@@ -133,7 +156,7 @@ def main():
     hist.columns = [c.strip() for c in hist.columns]
     m50, m5095 = hist["metrics/mAP50(B)"], hist["metrics/mAP50-95(B)"]
     ep = lambda i: int(hist["epoch"][i]) + (1 if hist["epoch"].min() == 0 else 0)
-    result = {
+    return {
         "name": cfg["name"], "plugin": cfg.get("plugin", ""), "train_args": args,
         "epochs_run": int(len(hist)), "stopped_by_deadline": hit_deadline["v"],
         "train_minutes": round(train_s / 60, 1),
@@ -142,10 +165,13 @@ def main():
         "ul_bestpt_epoch": ep(m5095.idxmax()), "ul_map50_at_bestpt": round(float(m50[m5095.idxmax()]), 4),
         "ul_last_map50": round(float(m50.iloc[-1]), 4),
         "map50_curve": [round(float(v), 4) for v in m50],
-        "kaggle": {},
     }
+
+
+def score(cfg, out, YOLO):
     val = load_val(cfg["val_images"], cfg["val_labels"])
     leak = frozenset(cfg.get("leak_stems", []))
+    kaggle = {}
     for tag in ("best", "last"):
         w = out / "weights" / f"{tag}.pt"
         if not w.exists():
@@ -154,10 +180,9 @@ def main():
         for conf in cfg["confs"]:
             full, per_class = kaggle_ap50(val, preds, conf)
             noleak, _ = kaggle_ap50(val, preds, conf, leak)
-            result["kaggle"][f"{tag}@{conf}"] = {"ap50": round(full, 4), "ap50_noleak": round(noleak, 4),
-                                                 "per_class": {k: round(v, 3) for k, v in per_class.items()}}
-    res_path.write_text(json.dumps(result, indent=1))
-    print(f"[{cfg['name']}] done in {train_s / 60:.1f} min")
+            kaggle[f"{tag}@{conf}"] = {"ap50": round(full, 4), "ap50_noleak": round(noleak, 4),
+                                       "per_class": {k: round(v, 3) for k, v in per_class.items()}}
+    return kaggle
 
 
 if __name__ == "__main__":
